@@ -77,7 +77,33 @@ python main.py ask "What is the difference between supervised and unsupervised l
 
 # Or chat interactively
 python main.py chat
+
+# Score retrieval + answer quality against the golden set (see Evaluation below)
+python main.py evaluate
 ```
+
+## Evaluation
+
+`python main.py evaluate` runs every question in a hand-labeled golden set
+([src/eval_data.py](src/eval_data.py)) through the pipeline and scores the two
+halves independently ([src/evaluator.py](src/evaluator.py)):
+
+| What | Metric | How it's checked |
+|---|---|---|
+| Retrieval, by page | Hit Rate@k, MRR | a top-k chunk has the expected page **and** source PDF |
+| Retrieval, by content | Hit Rate@k, MRR | a top-k chunk's text contains the expected defining phrase |
+| Generation | Answer accuracy | the answer contains all expected keywords |
+
+Page matching is a cheap proxy; content matching checks what was actually retrieved,
+so reporting both shows when chunking or page boundaries mislead the page score.
+Generation uses keyword containment rather than an LLM-as-judge, so evaluation
+costs nothing beyond the answer calls themselves.
+
+The golden set is written for *Think Python 2nd Edition*
+([free PDF](https://greenteapress.com/thinkpython2/thinkpython2.pdf)) — save it as
+`data/thinkpython2.pdf` and run `python main.py index` first. To evaluate a different
+book, replace the entries in [src/eval_data.py](src/eval_data.py) with your own
+questions, pages, phrases and keywords.
 
 ## Project structure
 
@@ -93,8 +119,10 @@ rag1/
 │   ├── vector_store.py   # step 4 — persist/query vectors in Chroma
 │   ├── retriever.py      # step 5 — question -> top-k relevant chunks
 │   ├── generator.py      # step 6 — chunks + question -> grounded answer (Claude, or Ollama fallback)
-│   └── pipeline.py       # orchestrates the steps above
-├── main.py              # CLI (index / ask / chat)
+│   ├── pipeline.py       # orchestrates the steps above
+│   ├── evaluator.py      # step 8 — score retrieval + generation against the golden set
+│   └── eval_data.py      # hand-labeled golden set (questions, pages, phrases, keywords)
+├── main.py              # CLI (index / ask / chat / evaluate)
 └── requirements.txt
 ```
 
@@ -119,5 +147,5 @@ rag1/
 
 - Hybrid search (BM25 keyword + vector) for queries with exact terms/numbers.
 - Re-ranking retrieved chunks with a cross-encoder before generation.
-- A small evaluation set of Q&A pairs to measure retrieval/answer quality.
+- A larger golden set, and LLM-as-judge scoring for answers that paraphrase the keywords.
 - A simple web UI (Streamlit/Gradio) instead of the CLI.
