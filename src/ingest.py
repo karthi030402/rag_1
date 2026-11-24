@@ -20,11 +20,16 @@ def load_pdfs(data_dir: Path) -> List[Dict]:
 
     pages: List[Dict] = []
     for pdf_path in pdf_files:
-        reader = PdfReader(str(pdf_path))
-        for page_num, page in enumerate(reader.pages, start=1):
-            text = (page.extract_text() or "").strip()
-            if not text:
-                continue
-            pages.append({"text": text, "source": pdf_path.name, "page": page_num})
+        pages.extend(load_pdf(pdf_path))
+    return pages
 
+
+def load_pdf(pdf_path: Path) -> List[Dict]:
+    """Extract text from a single PDF, one record per non-empty page."""
+    reader = PdfReader(str(pdf_path))
+    pages: List[Dict] = []
+    for page_num, page in enumerate(reader.pages, start=1):
+        text = (page.extract_text() or "").strip()
+        if text:
+            pages.append({"text": text, "source": pdf_path.name, "page": page_num})
     return pages

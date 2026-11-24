@@ -12,6 +12,15 @@ import requests
 
 from src import config
 
+
+class GenerationError(RuntimeError):
+    """A generation backend failed; carries a user-facing message and an HTTP status for the API."""
+
+    def __init__(self, message: str, status_code: int = 503):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 SYSTEM_PROMPT = (
     "You are a study assistant answering questions about a specific textbook. "
     "Answer ONLY using the provided context. If the answer is not contained in "
@@ -29,12 +38,25 @@ def build_prompt(question: str, context_chunks: List[Dict]) -> str:
 
 def _generate_with_claude(prompt: str) -> str:
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model=config.GENERATION_MODEL,
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        response = client.messages.create(
+            model=config.GENERATION_MODEL,
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.AuthenticationError as e:
+        raise GenerationError("Anthropic rejected the API key. Check ANTHROPIC_API_KEY.", 502) from e
+    except anthropic.NotFoundError as e:
+        raise GenerationError(
+            f"Claude model '{config.GENERATION_MODEL}' not found. Check CLAUDE_MODEL.", 502
+        ) from e
+    except anthropic.RateLimitError as e:
+        raise GenerationError("Claude rate limit reached. Try again shortly.", 429) from e
+    except anthropic.APIConnectionError as e:
+        raise GenerationError("Could not reach the Anthropic API.", 503) from e
+    except anthropic.APIStatusError as e:
+        raise GenerationError(f"Claude API error ({e.status_code}).", 502) from e
     return response.content[0].text
 
 
@@ -52,12 +74,24 @@ def _generate_with_ollama(prompt: str) -> str:
         )
         response.raise_for_status()
     except requests.exceptions.ConnectionError as e:
-        raise RuntimeError(
+        raise GenerationError(
             f"Could not reach Ollama at {config.OLLAMA_BASE_URL}. "
             "Is it installed and running? (Install from https://ollama.com, "
             f"then run `ollama pull {config.OLLAMA_MODEL}`.)"
         ) from e
-    return response.json()["response"]
+    except requests.exceptions.Timeout as e:
+        raise GenerationError("Ollama took too long to answer.", 504) from e
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 404:
+            raise GenerationError(
+                f"Ollama model '{config.OLLAMA_MODEL}' is not pulled. "
+                f"Run: ollama pull {config.OLLAMA_MODEL}"
+            ) from e
+        raise GenerationError(f"Ollama returned HTTP {response.status_code}.", 502) from e
+    try:
+        return response.json()["response"]
+    except (ValueError, KeyError) as e:
+        raise GenerationError("Ollama returned an unexpected response.", 502) from e
 
 
 def generate_answer(question: str, context_chunks: List[Dict]) -> str:

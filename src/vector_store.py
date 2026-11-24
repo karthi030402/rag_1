@@ -12,8 +12,16 @@ def _get_client() -> chromadb.ClientAPI:
     return chromadb.PersistentClient(path=str(config.STORAGE_DIR))
 
 
+def _collection_metadata() -> Dict:
+    # The distance metric is fixed when a collection is created; changing
+    # config.DISTANCE_METRIC only takes effect after `python main.py index`.
+    return {"hnsw:space": config.DISTANCE_METRIC}
+
+
 def get_collection():
-    return _get_client().get_or_create_collection(name=config.COLLECTION_NAME)
+    return _get_client().get_or_create_collection(
+        name=config.COLLECTION_NAME, metadata=_collection_metadata()
+    )
 
 
 def reset_collection():
@@ -23,7 +31,9 @@ def reset_collection():
         client.delete_collection(config.COLLECTION_NAME)
     except Exception:
         pass
-    return client.get_or_create_collection(name=config.COLLECTION_NAME)
+    return client.get_or_create_collection(
+        name=config.COLLECTION_NAME, metadata=_collection_metadata()
+    )
 
 
 def add_chunks(collection, chunks: List[Dict], embeddings: List[List[float]]) -> None:
@@ -31,3 +41,8 @@ def add_chunks(collection, chunks: List[Dict], embeddings: List[List[float]]) ->
     documents = [c["text"] for c in chunks]
     metadatas = [{"source": c["source"], "page": c["page"]} for c in chunks]
     collection.add(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
+
+
+def is_indexed(collection, source: str) -> bool:
+    """True if any chunk from this PDF file name is already stored."""
+    return bool(collection.get(where={"source": source}, limit=1)["ids"])

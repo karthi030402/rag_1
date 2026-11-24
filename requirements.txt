@@ -4,4 +4,6 @@ chromadb==0.5.23
 anthropic==0.40.0
 python-dotenv==1.0.1
 requests==2.34.2
+fastapi==0.143.5
+uvicorn==0.54.0
 posthog<6  # chromadb 0.5.x telemetry uses the pre-6 capture() signature
