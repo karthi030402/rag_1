@@ -9,7 +9,13 @@ from src.embedder import embed_texts
 from src.generator import generate_answer
 from src.ingest import load_pdf, load_pdfs
 from src.retriever import retrieve
-from src.vector_store import add_chunks, get_collection, is_indexed, reset_collection
+from src.vector_store import (
+    add_chunks,
+    get_collection,
+    is_indexed,
+    remove_orphan_segment_dirs,
+    reset_collection,
+)
 
 
 def build_index() -> int:
@@ -20,6 +26,9 @@ def build_index() -> int:
 
     collection = reset_collection()
     add_chunks(collection, chunks, embeddings)
+    removed = remove_orphan_segment_dirs()
+    if removed:
+        print(f"Removed {len(removed)} stale index folder(s) from {config.STORAGE_DIR.name}/.")
     return len(chunks)
 
 

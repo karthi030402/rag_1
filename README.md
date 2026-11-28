@@ -41,16 +41,16 @@ Each stage of the pipeline lives in its own file under [src/](src/), and
 
 | Stage | Library |
 |---|---|
-| PDF parsing | [pypdf](https://pypi.org/project/pypdf/) |
-| Chunking | hand-rolled sliding window ([src/chunker.py](src/chunker.py)) |
-| Embeddings | [sentence-transformers](https://www.sbert.net/) (`all-MiniLM-L6-v2`, runs locally, no API cost) |
+| PDF parsing | [pypdfium2](https://pypi.org/project/pypdfium2/) (PDFium, Chrome's PDF engine; keeps word spacing at font changes) |
+| Chunking | hand-rolled sentence packing ([src/chunker.py](src/chunker.py)) |
+| Embeddings | [sentence-transformers](https://www.sbert.net/) (`BAAI/bge-small-en-v1.5`, runs locally, no API cost) |
 | Vector store | [Chroma](https://www.trychroma.com/) (local, persistent, cosine distance) |
 | Generation | [Claude](https://www.anthropic.com/) via the `anthropic` SDK, with a free local fallback to [Ollama](https://ollama.com) when no API key is set |
 | HTTP API | [FastAPI](https://fastapi.tiangolo.com/) + [uvicorn](https://www.uvicorn.org/) ([api.py](api.py)) |
 
 ## Setup
 
-Requires **Python 3.10+** (`pypdf` and `requests` in requirements.txt need it).
+Requires **Python 3.10+** (`requests` in requirements.txt needs it).
 
 ```bash
 # 1. Create and activate a virtual environment
@@ -131,7 +131,7 @@ Sources:
 | First time, or new set of PDFs | `python main.py index` |
 | Added one new PDF to `data/` | `python main.py add data/<book>.pdf` — only that book is embedded |
 | Replaced or removed a PDF | `python main.py index` — `add` can't detect a changed file with the same name |
-| Changed `CHUNK_SIZE`, `CHUNK_OVERLAP`, `EMBEDDING_MODEL` or `DISTANCE_METRIC` | `python main.py index` — every vector must be rebuilt |
+| Changed `CHUNK_STRATEGY`, `CHUNK_SIZE`, `CHUNK_OVERLAP`, `EMBEDDING_MODEL` or `DISTANCE_METRIC` | `python main.py index` — every vector must be rebuilt |
 | Changed the LLM, `TOP_K`, prompts or API code | No re-index needed; just restart the server |
 
 `add` skips a book that's already indexed, and refuses PDFs outside `data/` (so a
@@ -205,6 +205,7 @@ Set in `.env` (see [.env.example](.env.example)); defaults live in [src/config.p
 | `CLAUDE_MODEL` | `claude-sonnet-5-5` | Claude model ID |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server |
 | `OLLAMA_MODEL` | `qwen2.5:1.5b` | Local model (must be pulled) |
+| `OLLAMA_TEMPERATURE` / `OLLAMA_SEED` | `0` / `42` | Deterministic answers, so `evaluate` scores are comparable between runs |
 | `API_TOKEN` | unset | When set, `/ask` requires `Authorization: Bearer <token>` |
 | `API_HOST` / `API_PORT` | `0.0.0.0` / `8000` | Where `python api.py` listens (`127.0.0.1` = this Mac only) |
 | `DEBUG_LOG` | `true` | Print each `/ask` in the server terminal |
@@ -235,7 +236,10 @@ are fine (they don't change the Think Python scores), but their questions aren't
 scored yet. To evaluate another book, add entries to
 [src/eval_data.py](src/eval_data.py) with your own questions, pages, phrases and keywords.
 
-Baseline with Ollama `qwen2.5:1.5b` (Think Python + Think Stats indexed):
+Every score change is tracked, with its config snapshot and reference Q&A, in
+[docs/EVALUATION_LOG.md](docs/EVALUATION_LOG.md). Add an entry there after each change.
+
+Baseline with Ollama `qwen2.5:1.5b` (Think Python, Think Stats and Think Bayes indexed):
 
 | Metric | Result |
 |---|---|
@@ -268,12 +272,27 @@ rag_1/
 
 ## Design notes
 
-- **Chunking with overlap** (`CHUNK_SIZE=800`, `CHUNK_OVERLAP=150` in [src/config.py](src/config.py))
-  prevents an answer from being split across a chunk boundary with neither half
-  having enough context.
+- **Sentence chunking with overlap** (`CHUNK_STRATEGY="sentence"`, `CHUNK_SIZE=800`,
+  `CHUNK_OVERLAP=150` in [src/config.py](src/config.py)): whole sentences are packed
+  into chunks of up to 800 characters, so a chunk never starts or ends mid-sentence,
+  and the last sentence(s) of each chunk are repeated at the start of the next.
+  Each page is split into roughly equal chunks, and a short final sentence joins
+  the previous chunk instead of becoming a tiny chunk of its own. Line breaks are
+  kept, so code examples stay readable. Set `CHUNK_STRATEGY=fixed` for the old
+  800-character sliding window.
 - **Local embeddings** keep the indexing step free and offline; only the final
   generation call uses the Claude API, which keeps API usage — and cost — low.
-- **Cosine distance**: `all-MiniLM-L6-v2` ends with a `Normalize` step, so every
+- **Embedding model**: `BAAI/bge-small-en-v1.5` (switched from `all-MiniLM-L6-v2`;
+  same 384 dims, better retrieval quality). Questions are embedded with BGE's query
+  instruction prefix (`QUERY_INSTRUCTION` in config); chunks are embedded without it.
+- **Page cleanup at ingestion** ([src/ingest.py](src/ingest.py)): title/copyright
+  pages (before the PDF's first bookmark), table-of-contents and index pages, and
+  each page's running header ("116 Chapter 12. Tuples") are removed before chunking,
+  so they can't take retrieval slots. Page numbers are unchanged.
+- **Index cleanup**: Chroma's `delete_collection()` leaves the old vector folder on
+  disk, so a full `index` also removes any `storage/<uuid>/` folder that
+  `chroma.sqlite3` no longer references.
+- **Cosine distance**: embeddings are encoded with `normalize_embeddings=True`, so every
   vector has length 1. For unit vectors cosine, squared L2 (`2 − 2·cos`) and inner
   product all rank chunks identically; cosine is used because `distance = 1 − similarity`
   is directly readable and it stays correct even with a model that doesn't normalize.

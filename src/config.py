@@ -11,11 +11,18 @@ DATA_DIR = BASE_DIR / "data"        # put textbook PDFs here
 STORAGE_DIR = BASE_DIR / "storage"  # persistent vector DB lives here
 
 # --- Chunking ---
-CHUNK_SIZE = 800       # characters per chunk
-CHUNK_OVERLAP = 150    # characters shared between consecutive chunks
+# "sentence" packs whole sentences into chunks; "fixed" is the old character window.
+# Re-run `python main.py index` after changing any of these.
+CHUNK_STRATEGY = os.getenv("CHUNK_STRATEGY", "sentence")
+CHUNK_SIZE = 800       # max characters per chunk
+CHUNK_OVERLAP = 150    # max characters repeated from the end of the previous chunk
 
 # --- Embedding ---
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"   # small, local, free (via sentence-transformers)
+# Changing the model requires a full `python main.py index` — old vectors aren't comparable.
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"   # 384-dim, local, free (via sentence-transformers)
+# BGE is trained to embed *questions* with this instruction prefix (passages get none);
+# it noticeably helps short queries like "What is recursion?". Set to "" for models without one.
+QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 
 # --- Vector store ---
 COLLECTION_NAME = "textbook"
@@ -33,6 +40,11 @@ GENERATION_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+# Temperature 0 = always pick the most likely next token (greedy), and a fixed seed pins
+# any remaining sampling randomness. Together they make the same prompt give the same
+# answer, so `python main.py evaluate` scores can be compared between changes.
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
+OLLAMA_SEED = int(os.getenv("OLLAMA_SEED", "42"))
 
 # --- API server ---
 # When set, /ask requires `Authorization: Bearer <API_TOKEN>`. Leave unset for local-only use.

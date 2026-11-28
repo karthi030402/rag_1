@@ -15,6 +15,14 @@ def _get_model() -> SentenceTransformer:
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
+    """Embed passages (chunks). Vectors are unit length, so cosine/l2/ip rank identically."""
     model = _get_model()
-    vectors = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
+    vectors = model.encode(
+        texts, show_progress_bar=False, convert_to_numpy=True, normalize_embeddings=True
+    )
     return vectors.tolist()
+
+
+def embed_query(question: str) -> List[float]:
+    """Embed a search query, with the model's query instruction prefix (if it has one)."""
+    return embed_texts([config.QUERY_INSTRUCTION + question])[0]

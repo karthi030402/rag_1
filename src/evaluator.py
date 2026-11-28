@@ -22,11 +22,31 @@ LLM-as-judge, to keep evaluation free and fast (no extra API/model calls
 beyond the ones already being tested).
 """
 
+import re
 from typing import Dict, List
 
 from src.eval_data import GOLDEN_SET
 from src.pipeline import ask
 from src.retriever import retrieve
+
+
+def _normalize(text: str) -> str:
+    """Lowercase and collapse whitespace, so a phrase that wraps onto a new
+    line in the PDF still matches. The wording itself must still be exact."""
+    return re.sub(r"\s+", " ", text).lower().strip()
+
+
+def _match_group(answer: str, group) -> "str | None":
+    """Return the first alternative of a keyword group found in the answer, or None.
+
+    Word boundary at the start only: "each" won't match "reach", but "repeat"
+    still matches "repeatedly". A plain string is a one-alternative group.
+    """
+    for alt in [group] if isinstance(group, str) else group:
+        if re.search(r"\b" + re.escape(alt.lower()), answer):
+            return alt
+    return None
+
 
 def _first_rank_matching(items_in_rank_order: List, predicate) -> "int | None":
     for i, item in enumerate(items_in_rank_order, start=1):
@@ -54,8 +74,8 @@ def evaluate_retrieval(golden_set: List[Dict] = GOLDEN_SET) -> Dict:
         page_hits += page_hit
         page_reciprocal_ranks.append(1 / page_rank if page_hit else 0)
 
-        phrase = item["expected_phrase"].lower()
-        content_rank = _first_rank_matching(chunks, lambda c: phrase in c["text"].lower())
+        phrase = _normalize(item["expected_phrase"])
+        content_rank = _first_rank_matching(chunks, lambda c: phrase in _normalize(c["text"]))
         content_hit = content_rank is not None
         content_hits += content_hit
         content_reciprocal_ranks.append(1 / content_rank if content_hit else 0)
@@ -86,9 +106,10 @@ def evaluate_generation(golden_set: List[Dict] = GOLDEN_SET) -> Dict:
 
     for item in golden_set:
         result = ask(item["question"])
-        answer_lower = result["answer"].lower()
-        matched = [kw for kw in item["expected_keywords"] if kw.lower() in answer_lower]
-        passed = len(matched) == len(item["expected_keywords"])
+        answer = _normalize(result["answer"])
+        hits = [_match_group(answer, g) for g in item["expected_keywords"]]
+        matched = [h for h in hits if h is not None]
+        passed = all(h is not None for h in hits)
         correct += passed
         per_question.append({
             "question": item["question"],

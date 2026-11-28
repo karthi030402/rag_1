@@ -22,18 +22,37 @@ class GenerationError(RuntimeError):
 
 
 SYSTEM_PROMPT = (
-    "You are a study assistant answering questions about a specific textbook. "
-    "Answer ONLY using the provided context. If the answer is not contained in "
-    "the context, say you don't know instead of guessing. When you use a piece "
-    "of context, cite its page like (p. 12)."
+    "You are a study assistant. You answer questions using ONLY the numbered "
+    "excerpts from textbooks that you are given.\n"
+    "Rules:\n"
+    "1. Use only facts stated in the excerpts. Do not add knowledge from "
+    "elsewhere, even if you know it.\n"
+    "2. For definitions, use the book's own wording. Quote the defining "
+    "sentence when there is one.\n"
+    "3. After each sentence, cite the excerpt(s) it came from as [1], [2], etc. "
+    "Cite only excerpts you actually used.\n"
+    "4. If the excerpts do not contain the answer, reply exactly: "
+    "\"I couldn't find this in the books.\"\n"
+    "5. Be concise: 2-5 sentences, plus a short code example from the excerpts "
+    "if it helps."
 )
 
 
 def build_prompt(question: str, context_chunks: List[Dict]) -> str:
-    context_block = "\n\n".join(
-        f"[Page {c['page']} of {c['source']}]\n{c['text']}" for c in context_chunks
+    # Numbers match the order of `sources` in the API response:
+    # [1] = sources[0], [2] = sources[1], ...
+    excerpts = "\n\n".join(
+        f"[{i}] {c['source']}, page {c['page']}\n{c['text']}"
+        for i, c in enumerate(context_chunks, start=1)
     )
-    return f"Context:\n{context_block}\n\nQuestion: {question}"
+    # Small models follow the instruction nearest the end best, so repeat
+    # the key rules after the question.
+    return (
+        f"Excerpts:\n{excerpts}\n\n"
+        f"Question: {question}\n\n"
+        "Answer using only the excerpts above, in the book's wording, "
+        "citing excerpts as [n]."
+    )
 
 
 def _generate_with_claude(prompt: str) -> str:
@@ -69,6 +88,10 @@ def _generate_with_ollama(prompt: str) -> str:
                 "system": SYSTEM_PROMPT,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "temperature": config.OLLAMA_TEMPERATURE,
+                    "seed": config.OLLAMA_SEED,
+                },
             },
             timeout=300,
         )
